@@ -46,6 +46,10 @@ fi
 # shellcheck disable=SC1091
 source "$CONDA_DIR/etc/profile.d/conda.sh"
 
+# Accepteer TOS (nodig voor conda install e.d.)
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+
 # ---- 2) Env 'lerobot' met Python 3.10 + lerobot ----
 if conda env list | awk '{print $1}' | grep -qx "$CONDA_ENV"; then
   echo "✅ Conda env bestaat: $CONDA_ENV"
@@ -109,10 +113,9 @@ TMP_RULE="$(mktemp /tmp/udev.rules.XXXXXX)"
 while IFS= read -r ent; do
   IFS=',' read -r serial nice role <<<"$ent"
   if [[ "$role" == "follower" ]]; then
-    
     echo "SUBSYSTEM==\"tty\", ENV{ID_BUS}==\"usb\", ENV{ID_SERIAL_SHORT}==\"$serial\", SYMLINK+=\"tty_${nice}_${role}\", SYMLINK+=\"tty_follower\"" >> "$TMP_RULE"
   else
-    echo "SUBSYSTEM==\"tty\", ENV{ID_BUS}==\"usb\", ENV{ID_SERIAL_SHORT}==\"$serial\", SYMLINK+=\"tty_${nice}_${role}\", SYMLINK+=\"tty_leader\" >> "$TMP_RULE"
+    echo "SUBSYSTEM==\"tty\", ENV{ID_BUS}==\"usb\", ENV{ID_SERIAL_SHORT}==\"$serial\", SYMLINK+=\"tty_${nice}_${role}\", SYMLINK+=\"tty_leader\"" >> "$TMP_RULE"
   fi
 done < "$TMP_ENTRIES"
 

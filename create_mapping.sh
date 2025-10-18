@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export PYTHONUNBUFFERED=1
+export STDOUT_UNBUFFERED=1
 
 MAPFILE="./mapping.csv"
 
@@ -21,40 +23,63 @@ list_byid() {
 pick_new_device() {
   local before_file="$1"
   local role="$2"
-  echo ""
-  echo "👉 Sluit nu je ${role} aan (of herplug). Ik zoek naar een nieuw device onder /dev/serial/by-id/…"
-  echo "   (Druk Ctrl-C om te stoppen.)"
+  # Show prompt immediately and flush to stderr
+  echo "" >&2; sleep 0.1
+  echo "👉 Sluit nu je ${role} aan (of herplug). Ik zoek naar een nieuw device onder /dev/serial/by-id/…" >&2; sleep 0.1
+  echo "   (Druk Ctrl-C om te stoppen.)" >&2; sleep 0.1
+  printf "\n" >&2; sleep 0.1
 
   # baseline
   list_byid > "$before_file"
 
-  # wacht op verandering
+  # Wait for device to be removed (if already present)
+  echo "Wacht tot een device wordt verwijderd..." >&2; sleep 0.1
+  local removed=0
+  for i in {1..30}; do
+    sleep 1
+    tmp_rm="$(mktemp)"
+    list_byid > "$tmp_rm"
+    mapfile -t gone < <(comm -23 "$before_file" "$tmp_rm")
+    rm -f "$tmp_rm"
+    if (( ${#gone[@]} > 0 )); then
+      echo "✅ Device verwijderd. Nu opnieuw aansluiten..." >&2
+      removed=1
+      break
+    fi
+    printf "." >&2
+  done
+
+  # If a device was removed, refresh baseline
+  if (( removed )); then
+    list_byid > "$before_file"
+  fi
+
+  # Wait for new device to appear (compared to refreshed baseline)
   for i in {1..60}; do
     sleep 1
     tmp="$(mktemp)"
     list_byid > "$tmp"
-    # diff
     mapfile -t new < <(comm -13 "$before_file" "$tmp")
     rm -f "$tmp"
     if (( ${#new[@]} > 0 )); then
       if (( ${#new[@]} == 1 )); then
-        echo "✅ Nieuw device gevonden: ${new[0]}"
+        echo "✅ Nieuw device gevonden: ${new[0]}" >&2
         echo "${new[0]}"
         return 0
       else
-        echo "⚠️ Meerdere nieuwe devices gevonden:"
-        nl -w2 -s") " <(printf "%s\n" "${new[@]}")
+        echo "⚠️ Meerdere nieuwe devices gevonden:" >&2
+        nl -w2 -s") " <(printf "%s\n" "${new[@]}") >&2
         read -rp "Kies het nummer van je ${role}: " idx
         idx="${idx//[!0-9]/}"
-        (( idx>=1 && idx<=${#new[@]} )) || { echo "Ongeldige keuze"; continue; }
+        (( idx>=1 && idx<=${#new[@]} )) || { echo "Ongeldige keuze" >&2; continue; }
         echo "${new[$((idx-1))]}"
         return 0
       fi
     fi
-    printf "."
+    printf "." >&2
   done
-  echo ""
-  echo "❌ Geen nieuw device gedetecteerd. Probeer opnieuw en zorg dat udev symlink verschijnt."
+  echo "" >&2
+  echo "❌ Geen nieuw device gedetecteerd. Probeer opnieuw en zorg dat udev symlink verschijnt." >&2
   exit 1
 }
 
@@ -80,6 +105,7 @@ append_mapping() {
 
 do_one_role() {
   local role="$1"
+  echo "Create temp file for role $role"
   local tmpb; tmpb="$(mktemp)"
   local byid sel serial nicename
   byid="$(pick_new_device "$tmpb" "$role")"
