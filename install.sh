@@ -110,14 +110,15 @@ if [[ -f "$STARTUP_SCRIPT" ]]; then
   # Crontab entry met conda run
   CRON_ENTRY="@reboot $CONDA_BIN run -n $CONDA_ENV python $STARTUP_SCRIPT >> $HOME/startup.log 2>&1"
   
-  # Verwijder bestaande startup.py entries uit crontab
+  # Verwijder bestaande startup.py entries uit crontab en voeg nieuwe toe
   if crontab -l 2>/dev/null | grep -qF "startup.py"; then
     echo "🗑️  Verwijder oude startup.py entry uit crontab…"
-    crontab -l 2>/dev/null | grep -vF "startup.py" | crontab -
+    (crontab -l 2>/dev/null | grep -vF "startup.py" || true; echo "$CRON_ENTRY") | crontab -
+  else
+    # Voeg nieuwe entry toe
+    (crontab -l 2>/dev/null || true; echo "$CRON_ENTRY") | crontab -
   fi
   
-  # Voeg nieuwe entry toe
-  (crontab -l 2>/dev/null || true; echo "$CRON_ENTRY") | crontab -
   echo "✅ Crontab entry toegevoegd: startup.py draait bij reboot"
   echo "   Log: $HOME/startup.log"
 else
