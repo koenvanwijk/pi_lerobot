@@ -110,21 +110,10 @@ def generate_udev_rules(entries: list[tuple[str, str, str]], script_name: str) -
 
 
 def write_udev_rules(content: str, udev_rule: Path) -> None:
-    """Schrijf udev rules naar /etc/udev/rules.d/ met sudo."""
-    # Schrijf eerst naar temp file
-    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.rules') as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
-    
-    try:
-        print(f"📝 Schrijf naar {udev_rule}…")
-        subprocess.run(["sudo", "mv", tmp_path, str(udev_rule)], check=True)
-        subprocess.run(["sudo", "chown", "root:root", str(udev_rule)], check=True)
-        subprocess.run(["sudo", "chmod", "0644", str(udev_rule)], check=True)
-    finally:
-        # Cleanup temp file als het nog bestaat
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+    """Schrijf udev rules naar bestand."""
+    print(f"📝 Schrijf naar {udev_rule}…")
+    with open(udev_rule, 'w', encoding='utf-8') as f:
+        f.write(content)
 
 
 
@@ -156,6 +145,12 @@ def main():
     if not entries:
         print("⚠️  Geen geldige entries gevonden in mapping bestand", file=sys.stderr)
         sys.exit(1)
+    
+    # Genereer udev rules
+    content = generate_udev_rules(entries, script_name=sys.argv[0])
+    
+    # Schrijf naar bestand
+    write_udev_rules(content, udev_rule)
     
     print("✅ Udev rules succesvol gegenereerd!")
 
