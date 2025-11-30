@@ -108,32 +108,45 @@ def start_teleoperation(
     follower_id, follower_port, follower_type, follower_symlink = follower
     leader_id, leader_port, leader_type, leader_symlink = leader
     
+    # Gebruik symbolic links in plaats van resolved paths (ttyACM0 etc)
+    follower_symlink_path = f"/dev/{follower_symlink}"
+    leader_symlink_path = f"/dev/{leader_symlink}"
+    
     print("\n" + "=" * 60)
     print("🎮 START TELEOPERATION")
     print("=" * 60)
     print(f"  Follower: {follower_id} ({follower_type})")
-    print(f"    Port: {follower_port}")
-    print(f"    Link: /dev/{follower_symlink}")
+    print(f"    Port: {follower_symlink_path} -> {follower_port}")
     print()
     print(f"  Leader: {leader_id} ({leader_type})")
-    print(f"    Port: {leader_port}")
-    print(f"    Link: /dev/{leader_symlink}")
+    print(f"    Port: {leader_symlink_path} -> {leader_port}")
     print("=" * 60)
     
-    # Bouw commando
+    # Bouw commando - gebruik symbolic links voor stabiliteit
     cmd = [
         "lerobot-teleoperate",
         f"--robot.type={follower_type}_follower",
-        f"--robot.port={follower_port}",
+        f"--robot.port={follower_symlink_path}",
         f"--robot.id={follower_id}",
         f"--teleop.type={leader_type}_leader",
-        f"--teleop.port={leader_port}",
+        f"--teleop.port={leader_symlink_path}",
         f"--teleop.id={leader_id}"
     ]
     
     print(f"\n💻 Command:")
     print(f"  {' '.join(cmd)}")
     print()
+    
+    # Sla configuratie op voor startup.py
+    config_file = Path.home() / ".lerobot_teleop_config"
+    try:
+        with open(config_file, 'w') as f:
+            f.write(f"{follower_symlink_path}\n")
+            f.write(f"{leader_symlink_path}\n")
+        print(f"💾 Configuratie opgeslagen in {config_file}")
+        print(f"   Deze keuze wordt bij reboot hergebruikt door startup.py\n")
+    except Exception as e:
+        print(f"⚠️  Kon configuratie niet opslaan: {e}\n")
     
     # Vraag bevestiging
     confirm = input("Start teleoperation? [Y/n]: ").strip().lower()
@@ -164,6 +177,17 @@ def main() -> None:
     print("=" * 60)
     print("🤖 LeRobot Teleoperation Selector")
     print("=" * 60)
+    
+    # Check voor --reset argument
+    if len(sys.argv) > 1 and sys.argv[1] in ['--reset', '-r']:
+        config_file = Path.home() / ".lerobot_teleop_config"
+        if config_file.exists():
+            config_file.unlink()
+            print("\n✅ Configuratie gereset!")
+            print("   Startup.py zal nu standaard /dev/tty_follower en /dev/tty_leader gebruiken\n")
+        else:
+            print("\n⚠️  Geen configuratie gevonden om te resetten\n")
+        sys.exit(0)
     
     # Scan devices
     print("\n🔍 Scannen naar devices...")

@@ -58,50 +58,88 @@ def initialize_lerobot() -> None:
 def start_teleoperation() -> None:
     """
     Start LeRobot teleoperation in de achtergrond.
+    
+    Gebruikt /dev/tty_follower en /dev/tty_leader als standaard,
+    of leest opgeslagen keuze uit ~/.lerobot_teleop_config
     """
     log("🎮 Start teleoperation...")
     
-    dev_dir = Path("/dev")
+    config_file = Path.home() / ".lerobot_teleop_config"
     
-    # Zoek follower device met symbolic link (pattern: tty_<name>_follower_<type>)
-    follower_links = list(dev_dir.glob("tty_*_follower_*"))
-    if not follower_links:
-        log("⚠️  Geen follower device gevonden (tty_*_follower_*)")
-        return
+    # Initialiseer variabelen
+    follower_port = None
+    leader_port = None
+    follower_type = None
+    leader_type = None
+    follower_id = None
+    leader_id = None
+    use_saved_config = False
     
-    # Gebruik eerste follower link
-    follower_link = follower_links[0]
-    # Extraheer robot ID en type uit symbolic link naam
-    # bijv. tty_white_follower_so101 -> name=white, type=so101
-    parts = follower_link.name.replace("tty_", "").split("_")
-    if len(parts) >= 3:
-        follower_type = parts[-1]  # Laatste deel is type
-        follower_id = "_".join(parts[:-2])  # Alles behalve laatste 2 delen (follower en type)
-    else:
-        log(f"⚠️  Kon follower info niet parsen uit: {follower_link.name}")
-        return
-    follower_port = follower_link.resolve()
+    # Check of er een opgeslagen configuratie is
+    if config_file.exists():
+        try:
+            with open(config_file, 'r') as f:
+                lines = f.read().strip().split('\n')
+                if len(lines) >= 2:
+                    saved_follower = lines[0].strip()
+                    saved_leader = lines[1].strip()
+                    
+                    # Valideer dat de devices nog bestaan
+                    if Path(saved_follower).exists() and Path(saved_leader).exists():
+                        log(f"📋 Gebruik opgeslagen configuratie:")
+                        log(f"   Follower: {saved_follower}")
+                        log(f"   Leader: {saved_leader}")
+                        
+                        # Parse device info uit saved paths
+                        follower_name = Path(saved_follower).name.replace("tty_", "")
+                        leader_name = Path(saved_leader).name.replace("tty_", "")
+                        
+                        follower_parts = follower_name.split("_")
+                        leader_parts = leader_name.split("_")
+                        
+                        if len(follower_parts) >= 3 and len(leader_parts) >= 3:
+                            follower_type = follower_parts[-1]
+                            follower_id = "_".join(follower_parts[:-2])
+                            leader_type = leader_parts[-1]
+                            leader_id = "_".join(leader_parts[:-2])
+                            
+                            follower_port = saved_follower
+                            leader_port = saved_leader
+                            use_saved_config = True
+                        else:
+                            log("⚠️  Kon opgeslagen configuratie niet parsen, gebruik standaard")
+                            config_file.unlink()  # Verwijder ongeldige config
+                    else:
+                        log("⚠️  Opgeslagen devices niet gevonden, gebruik standaard")
+                        config_file.unlink()
+        except Exception as e:
+            log(f"⚠️  Fout bij lezen configuratie: {e}")
+            if config_file.exists():
+                config_file.unlink()
     
-    # Zoek leader device met symbolic link (pattern: tty_<name>_leader_<type>)
-    leader_links = list(dev_dir.glob("tty_*_leader_*"))
-    if not leader_links:
-        log("⚠️  Geen leader device gevonden (tty_*_leader_*)")
-        return
+    # Als er geen geldige saved config is, gebruik standaard /dev/tty_follower en /dev/tty_leader
+    if not use_saved_config:
+        log("📋 Gebruik standaard devices: /dev/tty_follower en /dev/tty_leader")
+        
+        follower_port = "/dev/tty_follower"
+        leader_port = "/dev/tty_leader"
+        
+        # Check of devices bestaan
+        if not Path(follower_port).exists():
+            log(f"⚠️  Geen follower device gevonden: {follower_port}")
+            return
+        
+        if not Path(leader_port).exists():
+            log(f"⚠️  Geen leader device gevonden: {leader_port}")
+            return
+        
+        # Standaard: SO-101 robots zonder specifieke ID
+        follower_type = "so101"
+        follower_id = "default"
+        leader_type = "so101"
+        leader_id = "default"
     
-    # Gebruik eerste leader link
-    leader_link = leader_links[0]
-    # Extraheer teleop ID en type uit symbolic link naam
-    # bijv. tty_black_leader_so101 -> name=black, type=so101
-    parts = leader_link.name.replace("tty_", "").split("_")
-    if len(parts) >= 3:
-        leader_type = parts[-1]  # Laatste deel is type
-        leader_id = "_".join(parts[:-2])  # Alles behalve laatste 2 delen (leader en type)
-    else:
-        log(f"⚠️  Kon leader info niet parsen uit: {leader_link.name}")
-        return
-    leader_port = leader_link.resolve()
-    
-    # Teleoperation commando (zonder expliciete calibration paths - LeRobot zoekt ze automatisch)
+    # Teleoperation commando (gebruik symbolic links voor stabiliteit)
     cmd = [
         "lerobot-teleoperate",
         f"--robot.type={follower_type}_follower",
@@ -122,8 +160,8 @@ def start_teleoperation() -> None:
             text=True
         )
         log(f"✅ Teleoperation gestart (PID: {process.pid})")
-        log(f"   Follower: {follower_link.name} -> {follower_port} (ID: {follower_id}, Type: {follower_type})")
-        log(f"   Leader: {leader_link.name} -> {leader_port} (ID: {leader_id}, Type: {leader_type})")
+        log(f"   Follower: {follower_port} (ID: {follower_id}, Type: {follower_type})")
+        log(f"   Leader: {leader_port} (ID: {leader_id}, Type: {leader_type})")
         
     except Exception as e:
         log(f"❌ Fout bij starten teleoperation: {e}")
