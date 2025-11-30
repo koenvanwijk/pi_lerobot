@@ -152,13 +152,27 @@ def start_teleoperation() -> None:
     
     try:
         log(f"   Command: {' '.join(cmd)}")
-        # Start als achtergrond proces
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
+        
+        # Open log file voor teleoperation output
+        teleop_log_file = Path.home() / "teleoperation.log"
+        log(f"   Teleoperation output → {teleop_log_file}")
+        
+        with open(teleop_log_file, 'a') as log_file:
+            # Schrijf header met timestamp
+            log_file.write("\n" + "=" * 60 + "\n")
+            log_file.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting teleoperation\n")
+            log_file.write(f"Command: {' '.join(cmd)}\n")
+            log_file.write("=" * 60 + "\n")
+            log_file.flush()
+            
+            # Start als achtergrond proces met output naar log file
+            process = subprocess.Popen(
+                cmd,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,  # Combineer stderr met stdout
+                text=True
+            )
+        
         log(f"✅ Teleoperation gestart (PID: {process.pid})")
         log(f"   Follower: {follower_port} (ID: {follower_id}, Type: {follower_type})")
         log(f"   Leader: {leader_port} (ID: {leader_id}, Type: {leader_type})")
