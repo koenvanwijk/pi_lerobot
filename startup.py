@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""
+Startup script voor LeRobot op Raspberry Pi.
+Dit script wordt automatisch uitgevoerd bij reboot via crontab.
+"""
+
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+
+def log(message: str) -> None:
+    """Print bericht met timestamp."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}", flush=True)
+
+
+def check_devices() -> bool:
+    """
+    Controleer of USB serial devices beschikbaar zijn.
+    Returns: True als devices gevonden zijn.
+    """
+    dev_dir = Path("/dev")
+    
+    # Zoek naar tty_* symlinks
+    tty_devices = list(dev_dir.glob("tty_*"))
+    
+    if tty_devices:
+        log(f"✅ Gevonden {len(tty_devices)} USB serial device(s):")
+        for dev in sorted(tty_devices):
+            log(f"   - {dev.name}")
+        return True
+    else:
+        log("⚠️  Geen USB serial devices gevonden")
+        return False
+
+
+def initialize_lerobot() -> None:
+    """
+    Initialiseer LeRobot systeem.
+    Voeg hier je specifieke initialisatie code toe.
+    """
+    log("🤖 Initialiseer LeRobot systeem...")
+    
+    #Voorbeeld: check of lerobot package beschikbaar is
+    try:
+        import lerobot
+        log(f"✅ LeRobot package geladen (versie: {lerobot.__version__ if hasattr(lerobot, '__version__') else 'unknown'})")
+    except ImportError as e:
+        log(f"❌ LeRobot package niet gevonden: {e}")
+        return
+    
+    # TODO: Voeg hier je eigen initialisatie code toe:
+    # - Motor controllers initialiseren
+    # - Camera's configureren
+    # - Services starten
+    # - etc.
+    
+    log("✅ LeRobot systeem geïnitialiseerd")
+
+
+def main() -> None:
+    """Main startup functie."""
+    log("=" * 60)
+    log("🚀 LeRobot Startup Script")
+    log("=" * 60)
+    
+    # Wacht even tot systeem volledig opgestart is
+    log("⏳ Wacht 10 seconden voor systeem initialisatie...")
+    time.sleep(10)
+    
+    # Check USB devices
+    devices_found = check_devices()
+    
+    if not devices_found:
+        log("⚠️  Start zonder USB devices")
+    
+    # Initialiseer LeRobot
+    try:
+        initialize_lerobot()
+    except Exception as e:
+        log(f"❌ Fout tijdens initialisatie: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+    
+    log("=" * 60)
+    log("✅ Startup compleet")
+    log("=" * 60)
+
+
+if __name__ == "__main__":
+    main()

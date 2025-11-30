@@ -94,4 +94,33 @@ echo "🔁 Udev reload + trigger…"
 sudo udevadm control --reload
 sudo udevadm trigger
 
+# ---- 4) Crontab entry voor startup.py ----
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STARTUP_SCRIPT="$SCRIPT_DIR/startup.py"
+
+if [[ -f "$STARTUP_SCRIPT" ]]; then
+  echo "🔧 Configureer crontab voor startup.py…"
+  
+  # Maak startup.py executable
+  chmod +x "$STARTUP_SCRIPT"
+  
+  # Bepaal het conda activate commando
+  CONDA_ACTIVATE="source $CONDA_DIR/etc/profile.d/conda.sh && conda activate $CONDA_ENV"
+  
+  # Crontab entry
+  CRON_ENTRY="@reboot $CONDA_ACTIVATE && python $STARTUP_SCRIPT >> $HOME/startup.log 2>&1"
+  
+  # Check of de entry al bestaat
+  if crontab -l 2>/dev/null | grep -qF "$STARTUP_SCRIPT"; then
+    echo "✅ Crontab entry bestaat al voor startup.py"
+  else
+    # Voeg toe aan crontab
+    (crontab -l 2>/dev/null || true; echo "$CRON_ENTRY") | crontab -
+    echo "✅ Crontab entry toegevoegd: startup.py draait bij reboot"
+    echo "   Log: $HOME/startup.log"
+  fi
+else
+  echo "⚠️  startup.py niet gevonden, crontab entry overgeslagen"
+fi
+
 echo "✅ Installatie compleet!"
