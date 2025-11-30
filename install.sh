@@ -6,7 +6,7 @@ CONDA_DIR="$HOME/miniconda3"
 CONDA_ENV="lerobot"
 MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh"
 UDEV_RULE="/etc/udev/rules.d/99-usb-serial-aliases.rules"
-GITHUB_REPO="kwijk/raspberry5_lerobot"  # Pas aan naar jouw repo
+GITHUB_REPO="koenvanwijk/pi_lerobot"
 # ==========================
 
 usage() {
