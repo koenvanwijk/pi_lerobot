@@ -40,11 +40,22 @@ else
   echo "🛠  Installeren naar $CONDA_DIR…"
   bash "$TMP_SH" -b -p "$CONDA_DIR"
   rm -f "$TMP_SH"
+  
+  echo "🔧 Initialiseer conda voor bash…"
+  "$CONDA_DIR/bin/conda" init bash
+  echo "✅ Conda init compleet (herstart shell of run 'source ~/.bashrc')"
 fi
 
 # Conda in deze shell
 # shellcheck disable=SC1091
 source "$CONDA_DIR/etc/profile.d/conda.sh"
+
+# Als conda al bestond, run conda init toch (idempotent)
+if ! grep -q "conda initialize" "$HOME/.bashrc" 2>/dev/null; then
+  echo "🔧 Initialiseer conda voor bash…"
+  conda init bash
+  echo "✅ Conda init compleet"
+fi
 
 # Accepteer TOS (nodig voor conda install e.d.)
 conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
