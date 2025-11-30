@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-Interactief script om een robot/teleop paar te selecteren en teleoperation te starten.
+Interactief script om een robot/teleop paar te selecteren.
+Ondersteunt zowel teleoperation als calibratie.
+
+Gebruik:
+  ./select_teleop.py                Start teleoperation
+  ./select_teleop.py --calibrate    Calibreer een device
+  ./select_teleop.py --reset        Reset opgeslagen configuratie
 """
 
 import sys

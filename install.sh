@@ -5,7 +5,7 @@ set -euo pipefail
 CONDA_DIR="$HOME/miniconda3"
 CONDA_ENV="lerobot"
 UDEV_RULE="/etc/udev/rules.d/99-usb-serial-aliases.rules"
-GITHUB_REPO="koenvanwijk/pi_lerobot"
+GITHUB_REPO="koenvanwijk/teleop_lerobot"
 # ==========================
 
 usage() {

@@ -127,13 +127,9 @@ lerobot-teleoperate \
    sudo udevadm trigger
    ```
 
-4. **Calibreer robot** (optioneel):
-   ```bash
-   lerobot-calibrate \
-       --robot-type so101_follower \
-       --robot-port /dev/ttyACM0 \
-       --robot-id white_12
-   ```
+4. **Calibreer robot** (indien nodig):
+   
+   **Let op**: Er bestaat geen `lerobot-calibrate` commando. Voor calibratie gebruik je `select_teleop.py` of handmatige methodes volgens de LeRobot documentatie.
 
 5. **Export calibration**:
    ```bash
@@ -151,8 +147,8 @@ lerobot-teleoperate \
 
 ```bash
 # Clone repository
-git clone https://github.com/koenvanwijk/raspberry5_lerobot.git
-cd raspberry5_lerobot
+git clone https://github.com/koenvanwijk/teleop_lerobot.git
+cd teleop_lerobot
 
 # Run install script (installeert alles automatisch)
 ./install.sh
