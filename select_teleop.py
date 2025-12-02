@@ -143,14 +143,14 @@ def start_teleoperation(
     print(f"  {' '.join(cmd)}")
     print()
     
-    # Sla configuratie op voor startup.py
+    # Sla configuratie op voor webserver
     config_file = Path.home() / ".lerobot_teleop_config"
     try:
         with open(config_file, 'w') as f:
             f.write(f"{follower_symlink_path}\n")
             f.write(f"{leader_symlink_path}\n")
         print(f"💾 Configuratie opgeslagen in {config_file}")
-        print(f"   Deze keuze wordt bij reboot hergebruikt door startup.py\n")
+        print(f"   Deze keuze wordt bij reboot hergebruikt door webserver\n")
     except Exception as e:
         print(f"⚠️  Kon configuratie niet opslaan: {e}\n")
     
@@ -190,7 +190,7 @@ def main() -> None:
         if config_file.exists():
             config_file.unlink()
             print("\n✅ Configuratie gereset!")
-            print("   Startup.py zal nu standaard /dev/tty_follower en /dev/tty_leader gebruiken\n")
+            print("   Webserver zal nu standaard /dev/tty_follower en /dev/tty_leader gebruiken\n")
         else:
             print("\n⚠️  Geen configuratie gevonden om te resetten\n")
         sys.exit(0)

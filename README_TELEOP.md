@@ -1,23 +1,46 @@
-# LeRobot Teleoperation Scripts
+# LeRobot Teleoperation
 
 ## Overzicht
 
-Dit systeem heeft twee scripts voor teleoperation:
+Dit systeem gebruikt een **webserver** voor teleoperation control:
 
-1. **`startup.py`** - Automatische startup bij reboot (via crontab)
-2. **`select_teleop.py`** - Interactieve device selectie
+1. **`webserver.py`** - Web interface voor remote control (start automatisch bij reboot + auto-start teleoperation)
+2. **`select_teleop.py`** - Interactieve device selectie (voor handmatig gebruik)
 
-## Hoe het werkt
+## 🌐 Web Control Interface (Aanbevolen)
 
-### Standaard gedrag (startup.py)
+### Auto-start bij reboot
 
-Bij reboot start `startup.py` automatisch en gebruikt:
+**Bij reboot gebeurt automatisch:**
+1. Webserver start (na 5 seconden delay)
+2. Devices worden gedetecteerd
+3. **Teleoperation start automatisch** als devices beschikbaar zijn
+4. Web interface is beschikbaar op poort 5000
+
+⚡ **Plug & Play**: Sluit USB devices aan en reboot → teleoperation draait automatisch!
+
+### Toegang
+
+Na reboot is de webserver automatisch beschikbaar op:
+- **Lokaal**: http://localhost:5000
+- **Netwerk**: http://[RASPBERRY_PI_IP]:5000
+
+### Features
+- 🚀 Auto-start teleoperation bij boot
+- ▶️ Start/Stop teleoperation met één klik
+- 📊 Real-time status monitoring
+- 🤖 Device info (Follower & Leader)
+- 🔄 Auto-refresh elke 5 seconden
+
+### Standaard gedrag
+
+De webserver gebruikt automatisch:
 - `/dev/tty_follower` (standaard: eerste follower uit mapping.csv)
 - `/dev/tty_leader` (standaard: eerste leader uit mapping.csv)
 - Type: `so101` (standaard robot type)
 
 ```bash
-# Automatisch gestart via crontab:
+# Commando dat automatisch uitgevoerd wordt bij boot:
 lerobot-teleoperate \
   --robot.type=so101_follower \
   --robot.port=/dev/tty_follower \
@@ -26,6 +49,8 @@ lerobot-teleoperate \
   --teleop.port=/dev/tty_leader \
   --teleop.id=default
 ```
+
+## 🛠️ Handmatig gebruik
 
 ### Specifieke robot kiezen (select_teleop.py)
 
@@ -51,7 +76,7 @@ Om terug te gaan naar de standaard devices:
 ./select_teleop.py --reset
 ```
 
-Dit verwijdert de opgeslagen configuratie en `startup.py` gebruikt weer de standaard `/dev/tty_follower` en `/dev/tty_leader`.
+Dit verwijdert de opgeslagen configuratie en de webserver gebruikt weer de standaard `/dev/tty_follower` en `/dev/tty_leader`.
 
 ## Voorbeelden
 

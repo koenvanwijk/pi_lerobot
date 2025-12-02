@@ -85,10 +85,11 @@ else
   conda create -y -n "$CONDA_ENV" python=3.10
 fi
 
-echo "📦 pip install lerobot…"
+echo "📦 pip install lerobot en dependencies…"
 conda activate "$CONDA_ENV"
 pip install --upgrade pip
 pip install lerobot[feetech]
+pip install flask
 
 # ---- 3) Calibration files installeren ----
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -131,34 +132,76 @@ echo "🔁 Udev reload + trigger…"
 sudo udevadm control --reload
 sudo udevadm trigger
 
-# ---- 5) Crontab entry voor startup.py ----
-STARTUP_SCRIPT="$SCRIPT_DIR/startup.py"
+# ---- 5) Crontab entry voor webserver ----
+WEBSERVER_SCRIPT="$SCRIPT_DIR/webserver.py"
 
-if [[ -f "$STARTUP_SCRIPT" ]]; then
-  echo "🔧 Configureer crontab voor startup.py…"
-  
-  # Maak startup.py executable
-  chmod +x "$STARTUP_SCRIPT"
-  
-  # Gebruik conda uit condabin voor crontab
-  CONDA_BIN="$CONDA_DIR/condabin/conda"
-  
-  # Crontab entry met conda run
-  CRON_ENTRY="@reboot $CONDA_BIN run -n $CONDA_ENV python $STARTUP_SCRIPT >> $HOME/startup.log 2>&1"
-  
-  # Verwijder bestaande startup.py entries uit crontab en voeg nieuwe toe
-  if crontab -l 2>/dev/null | grep -qF "startup.py"; then
-    echo "🗑️  Verwijder oude startup.py entry uit crontab…"
-    (crontab -l 2>/dev/null | grep -vF "startup.py" || true; echo "$CRON_ENTRY") | crontab -
-  else
-    # Voeg nieuwe entry toe
-    (crontab -l 2>/dev/null || true; echo "$CRON_ENTRY") | crontab -
-  fi
-  
-  echo "✅ Crontab entry toegevoegd: startup.py draait bij reboot"
-  echo "   Log: $HOME/startup.log"
-else
-  echo "⚠️  startup.py niet gevonden, crontab entry overgeslagen"
+# Gebruik conda uit condabin voor crontab
+CONDA_BIN="$CONDA_DIR/condabin/conda"
+
+# Verwijder oude startup.py entries als die er zijn
+if crontab -l 2>/dev/null | grep -qF "startup.py"; then
+  echo "🗑️  Verwijder oude startup.py entry uit crontab…"
+  crontab -l 2>/dev/null | grep -vF "startup.py" | crontab -
 fi
 
+if [[ -f "$WEBSERVER_SCRIPT" ]]; then
+  echo "🔧 Configureer crontab voor webserver.py…"
+  
+  chmod +x "$WEBSERVER_SCRIPT"
+  
+  WEBSERVER_CRON="@reboot $CONDA_BIN run -n $CONDA_ENV python $WEBSERVER_SCRIPT >> $HOME/webserver.log 2>&1"
+  
+  # Verwijder bestaande webserver.py entries en voeg nieuwe toe
+  if crontab -l 2>/dev/null | grep -qF "webserver.py"; then
+    echo "🗑️  Verwijder oude webserver.py entry uit crontab…"
+    (crontab -l 2>/dev/null | grep -vF "webserver.py" || true; echo "$WEBSERVER_CRON") | crontab -
+  else
+    (crontab -l 2>/dev/null || true; echo "$WEBSERVER_CRON") | crontab -
+  fi
+  
+  echo "✅ Crontab entry toegevoegd: webserver.py draait bij reboot"
+  echo "   Log: $HOME/webserver.log"
+  echo "   Web interface: http://localhost:5000"
+else
+  echo "⚠️  webserver.py niet gevonden, crontab entry overgeslagen"
+fi
+
+echo ""
 echo "✅ Installatie compleet!"
+echo ""
+echo "═══════════════════════════════════════════════════════════"
+echo "📋 Geïnstalleerde componenten:"
+echo "   • Miniconda met conda env 'lerobot'"
+echo "   • lerobot package met feetech support"
+echo "   • Flask webserver (auto-start bij reboot)"
+echo "   • Udev rules voor USB devices"
+echo "   • Calibration files"
+echo ""
+echo "🚀 Bij reboot (AUTOMATISCH):"
+echo "   1. Webserver start (na 5 sec)"
+echo "   2. Devices worden gedetecteerd"
+echo "   3. Teleoperation start automatisch!"
+echo "   4. Web interface: http://localhost:5000"
+echo ""
+echo "⚡ Plug & Play:"
+echo "   Sluit USB devices aan → Reboot → Klaar!"
+echo ""
+echo "🛠️  Handmatig gebruik:"
+echo "   • Webserver: python webserver.py"
+echo "   • Interactieve selectie: ./select_teleop.py"
+echo "   • Direct: lerobot-teleoperate --robot.type=... --robot.port=..."
+echo ""
+echo "🌐 Web Control Interface:"
+echo "   • Lokaal: http://localhost:5000"
+echo "   • Netwerk: http://[IP]:5000"
+echo "   • Start/Stop teleoperation via browser"
+echo ""
+echo "📝 Logs:"
+echo "   • Webserver: tail -f ~/webserver.log"
+echo "   • Teleoperation: tail -f ~/teleoperation.log"
+echo ""
+echo "📖 Documentatie:"
+echo "   • README_TELEOP.md - Teleoperation uitleg"
+echo "   • MAPPING.md - Device mapping info"
+echo "═══════════════════════════════════════════════════════════"
+echo ""
