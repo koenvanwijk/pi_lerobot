@@ -27,14 +27,12 @@ class RobotState:
         self.leader_type: Optional[str] = None
         self.follower_id: Optional[str] = None
         self.leader_id: Optional[str] = None
-        self.lock = threading.Lock()
     
     def is_running(self) -> bool:
         """Check of teleoperation proces draait."""
-        with self.lock:
-            if self.teleop_process is None:
-                return False
-            return self.teleop_process.poll() is None
+        if self.teleop_process is None:
+            return False
+        return self.teleop_process.poll() is None
     
     def refresh_state(self):
         """Refresh state van system."""
@@ -98,90 +96,107 @@ def log(message: str) -> None:
 
 def start_teleoperation() -> bool:
     """Start LeRobot teleoperation."""
-    with state.lock:
-        if state.is_running():
-            log("⚠️  Teleoperation draait al")
+    if state.is_running():
+        log("⚠️  Teleoperation draait al")
+        return False
+    
+    log("🎮 Start teleoperation...")
+    
+    if not state.follower_port or not state.leader_port:
+        if not state.load_device_config():
+            log("❌ Geen geldige device configuratie")
             return False
+    
+    # Copy config values
+    follower_port = state.follower_port
+    leader_port = state.leader_port
+    follower_type = state.follower_type
+    leader_type = state.leader_type
+    follower_id = state.follower_id
+    leader_id = state.leader_id
+    
+    # Build command outside lock - use conda run (works in subprocess)
+    cmd = [
+        "conda", "run", "-n", "lerobot", "--no-capture-output",
+        "lerobot-teleoperate",
+        f"--robot.type={follower_type}_follower",
+        f"--robot.port={follower_port}",
+        f"--robot.id={follower_id}",
+        f"--teleop.type={leader_type}_leader",
+        f"--teleop.port={leader_port}",
+        f"--teleop.id={leader_id}"
+    ]
+    
+    try:
+        log(f"   Follower: {follower_port} ({follower_type})")
+        log(f"   Leader: {leader_port} ({leader_type})")
         
-        log("🎮 Start teleoperation...")
+        teleop_log_file = Path.home() / "teleoperation.log"
+        log(f"   Output → {teleop_log_file}")
         
-        if not state.follower_port or not state.leader_port:
-            if not state.load_device_config():
-                log("❌ Geen geldige device configuratie")
-                return False
+        # Open log file in append mode (blijft open voor subprocess)
+        log_file = open(teleop_log_file, 'a')
+        log_file.write("\n" + "=" * 60 + "\n")
+        log_file.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting teleoperation\n")
+        log_file.write(f"Follower: {follower_port} ({follower_type}/{follower_id})\n")
+        log_file.write(f"Leader: {leader_port} ({leader_type}/{leader_id})\n")
+        log_file.write("=" * 60 + "\n")
+        log_file.flush()
         
-        cmd = [
-            "lerobot-teleoperate",
-            f"--robot.type={state.follower_type}_follower",
-            f"--robot.port={state.follower_port}",
-            f"--robot.id={state.follower_id}",
-            f"--teleop.type={state.leader_type}_leader",
-            f"--teleop.port={state.leader_port}",
-            f"--teleop.id={state.leader_id}"
-        ]
+        # Start subprocess OUTSIDE lock to avoid blocking
+        process = subprocess.Popen(
+            cmd,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True
+        )
         
-        try:
-            log(f"   Command: {' '.join(cmd)}")
-            
-            teleop_log_file = Path.home() / "teleoperation.log"
-            log(f"   Teleoperation output → {teleop_log_file}")
-            
-            with open(teleop_log_file, 'a') as log_file:
-                log_file.write("\n" + "=" * 60 + "\n")
-                log_file.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting teleoperation\n")
-                log_file.write(f"Command: {' '.join(cmd)}\n")
-                log_file.write("=" * 60 + "\n")
-                log_file.flush()
-                
-                state.teleop_process = subprocess.Popen(
-                    cmd,
-                    stdout=log_file,
-                    stderr=subprocess.STDOUT,
-                    text=True
-                )
-            
-            state.teleop_mode = "teleoperation"
-            log(f"✅ Teleoperation gestart (PID: {state.teleop_process.pid})")
-            return True
-            
-        except Exception as e:
-            log(f"❌ Fout bij starten teleoperation: {e}")
-            state.teleop_process = None
-            state.teleop_mode = "stopped"
-            return False
+        # Update state
+        state.teleop_process = process
+        state.teleop_mode = "teleoperation"
+        
+        log(f"✅ Teleoperation gestart (PID: {process.pid})")
+        return True
+        
+    except Exception as e:
+        import traceback
+        log(f"❌ Fout bij starten teleoperation: {e}")
+        log(f"   Traceback: {traceback.format_exc()}")
+        state.teleop_process = None
+        state.teleop_mode = "stopped"
+        return False
 
 
 def stop_teleoperation() -> bool:
     """Stop het teleoperation proces."""
-    with state.lock:
-        if not state.is_running():
-            log("⚠️  Teleoperation draait niet")
-            state.teleop_mode = "stopped"
-            return False
+    if not state.is_running():
+        log("⚠️  Teleoperation draait niet")
+        state.teleop_mode = "stopped"
+        return False
+    
+    log("🛑 Stop teleoperation...")
+    
+    try:
+        state.teleop_process.terminate()
         
-        log("🛑 Stop teleoperation...")
+        for _ in range(50):
+            if state.teleop_process.poll() is not None:
+                break
+            time.sleep(0.1)
         
-        try:
-            state.teleop_process.terminate()
-            
-            for _ in range(50):
-                if state.teleop_process.poll() is not None:
-                    break
-                time.sleep(0.1)
-            
-            if state.teleop_process.poll() is None:
-                log("⚠️  Process reageert niet, force kill...")
-                state.teleop_process.kill()
-                state.teleop_process.wait()
-            
-            log("✅ Teleoperation gestopt")
-            state.teleop_process = None
-            state.teleop_mode = "stopped"
-            return True
-            
-        except Exception as e:
-            log(f"❌ Fout bij stoppen teleoperation: {e}")
-            return False
+        if state.teleop_process.poll() is None:
+            log("⚠️  Process reageert niet, force kill...")
+            state.teleop_process.kill()
+            state.teleop_process.wait()
+        
+        log("✅ Teleoperation gestopt")
+        state.teleop_process = None
+        state.teleop_mode = "stopped"
+        return True
+        
+    except Exception as e:
+        log(f"❌ Fout bij stoppen teleoperation: {e}")
+        return False
 
 
 # Flask web application
@@ -538,12 +553,8 @@ def api_stop():
     })
 
 
-def main():
-    """Main entry point."""
-    log("=" * 60)
-    log("🌐 LeRobot Web Control Server")
-    log("=" * 60)
-    
+def auto_start_thread():
+    """Separate thread voor auto-start van teleoperation."""
     # Wacht even voor systeem stabiliteit (vooral bij boot)
     log("⏳ Wacht 5 seconden voor systeem initialisatie...")
     time.sleep(5)
@@ -565,6 +576,17 @@ def main():
     else:
         log("⚠️  Geen USB devices gevonden - teleoperation niet gestart")
         log("   💡 Sluit devices aan en start handmatig via web interface")
+
+
+def main():
+    """Main entry point."""
+    log("=" * 60)
+    log("🌐 LeRobot Web Control Server")
+    log("=" * 60)
+    
+    # Start auto-start in aparte thread zodat webserver niet blokkeert
+    auto_start = threading.Thread(target=auto_start_thread, daemon=True)
+    auto_start.start()
     
     log("🚀 Webserver beschikbaar op http://0.0.0.0:5000")
     log("   Lokaal: http://localhost:5000")
