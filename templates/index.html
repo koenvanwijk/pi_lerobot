@@ -3,6 +3,11 @@
 <head>
     <title>LeRobot Control Center</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    
+    <!-- Blockly Libraries -->
+    <script src="https://unpkg.com/blockly/blockly.min.js"></script>
+    <script src="https://unpkg.com/blockly/python_compressed.js"></script>
+    
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -284,6 +289,10 @@
                 <span class="tab-icon">📹</span>
                 Cameras
             </button>
+            <button class="tab" onclick="showTab('blockly')">
+                <span class="tab-icon">🧩</span>
+                Blockly
+            </button>
             <button class="tab" onclick="showTab('network')">
                 <span class="tab-icon">🌐</span>
                 Network
@@ -332,6 +341,42 @@
                 </button>
             </div>
             
+            <!-- Position Saving Section -->
+            <div class="status-card" style="margin-top: 20px;">
+                <h3>💾 Save Current Position</h3>
+                <p style="margin-bottom: 15px;">Save the current robot position for use in Blockly programs</p>
+                
+                <div style="margin-bottom: 10px;">
+                    <button class="btn btn-primary" onclick="readCurrentPosition()" style="width: 100%;">
+                        📍 Read Current Position
+                    </button>
+                </div>
+                
+                <div id="current-position-display" style="margin-bottom: 15px; padding: 10px; background: #f0f0f0; border-radius: 5px; display: none;">
+                    <strong>Current Position:</strong>
+                    <pre id="current-position-text" style="margin: 5px 0; font-family: monospace; font-size: 12px;"></pre>
+                </div>
+                
+                <div style="margin-bottom: 10px;">
+                    <input type="text" id="position-name" placeholder="Position name (e.g., 'home', 'pick', 'place')" 
+                           style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
+                </div>
+                
+                <div style="margin-bottom: 10px;">
+                    <input type="text" id="position-description" placeholder="Description (optional)" 
+                           style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
+                </div>
+                
+                <button class="btn btn-success" onclick="saveCurrentPosition()" style="width: 100%;">
+                    💾 Save Current Position
+                </button>
+                
+                <div id="saved-positions-list" style="margin-top: 15px;">
+                    <h4>Saved Positions:</h4>
+                    <div id="positions-list-content">Loading...</div>
+                </div>
+            </div>
+            
             <div class="alert alert-info" style="margin-top: 20px;">
                 <strong>💡 Tip:</strong> Sluit USB devices aan en klik op "Start" om teleoperation te starten.
                 De server detecteert automatisch de aangesloten apparaten.
@@ -357,6 +402,55 @@
             
             <div id="camera-grid" class="camera-grid">
                 <!-- Camera streams will be added here dynamically -->
+            </div>
+        </div>
+        
+        <!-- Blockly Tab -->
+        <div id="blockly" class="tab-content">
+            <h2>🧩 Blockly Visual Programming</h2>
+            
+            <div class="button-group">
+                <button class="btn btn-primary" onclick="saveBlocklyProgram()">
+                    💾 Save Program
+                </button>
+                <button class="btn btn-success" onclick="loadBlocklyProgram()">
+                    📂 Load Program
+                </button>
+                <button class="btn btn-danger" onclick="clearBlockly()">
+                    🗑️ Clear Workspace
+                </button>
+                <button class="btn btn-primary" onclick="runBlocklyProgram()">
+                    ▶️ Run Program
+                </button>
+            </div>
+            
+            <div class="alert alert-info" style="margin-top: 20px;">
+                <strong>ℹ️ Blockly Editor:</strong> Drag and drop blocks to create programs. Custom robot blocks available!
+            </div>
+            
+            <!-- Blockly Workspace -->
+            <div id="blocklyDiv" style="height: 480px; width: 100%; border: 2px solid #e9ecef; border-radius: 10px; margin: 20px 0;"></div>
+            
+            <!-- Generated Code Display -->
+            <div class="status-card" style="margin-top: 20px;">
+                <h3>Generated Python Code</h3>
+                <pre id="generated-code" style="background: #f8f9fa; padding: 15px; border-radius: 8px; overflow-x: auto; max-height: 300px;">
+# Python code will appear here
+                </pre>
+            </div>
+            
+            <!-- Execution Results -->
+            <div id="execution-results" style="display: none;" class="status-card">
+                <h3>Execution Results</h3>
+                <div id="execution-output"></div>
+            </div>
+            
+            <!-- Saved Programs List -->
+            <div class="status-card" style="margin-top: 20px;">
+                <h3>Saved Programs</h3>
+                <div id="saved-programs-list">
+                    <!-- Program list will be populated here -->
+                </div>
             </div>
         </div>
         
@@ -482,6 +576,8 @@
     
     <script>
         let ws = null;
+        let blocklyWorkspace = null;
+        let pythonGenerator = null;
         
         // Tab switching
         function showTab(tabName) {
@@ -500,10 +596,15 @@
             // Load tab-specific data
             if (tabName === 'cameras') {
                 loadCameras();
+            } else if (tabName === 'blockly') {
+                initBlockly();
+                loadSavedPrograms();
             } else if (tabName === 'network') {
                 loadNetworkStatus();
             } else if (tabName === 'system') {
                 loadSystemInfo();
+            } else if (tabName === 'teleoperation') {
+                loadSavedPositionsList();
             }
         }
         
@@ -622,6 +723,124 @@
                 btn.disabled = false;
             } finally {
                 btn.classList.remove('loading');
+            }
+        }
+        
+        // Position management functions
+        async function readCurrentPosition() {
+            try {
+                const response = await fetch('/api/teleoperation/current-position');
+                const data = await response.json();
+                
+                if (data.success) {
+                    const display = document.getElementById('current-position-display');
+                    const text = document.getElementById('current-position-text');
+                    
+                    let posText = '';
+                    data.joint_names.forEach((name, i) => {
+                        posText += `${name}: ${data.angles[i].toFixed(2)}°\n`;
+                    });
+                    
+                    text.textContent = posText;
+                    display.style.display = 'block';
+                } else {
+                    alert('❌ Failed to read position');
+                }
+            } catch (error) {
+                alert('❌ Error reading position: ' + error);
+            }
+        }
+        
+        async function saveCurrentPosition() {
+            const nameInput = document.getElementById('position-name');
+            const descInput = document.getElementById('position-description');
+            const name = nameInput.value.trim();
+            
+            if (!name) {
+                alert('⚠️ Please enter a position name');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/teleoperation/save-current-position', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: name,
+                        joint_angles: [],  // Will be read from robot
+                        description: descInput.value.trim()
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert(`✅ Position '${name}' saved!\nAngles: ${JSON.stringify(data.angles)}`);
+                    nameInput.value = '';
+                    descInput.value = '';
+                    loadSavedPositionsList();
+                } else {
+                    alert('❌ Failed to save position: ' + data.message);
+                }
+            } catch (error) {
+                alert('❌ Error: ' + error);
+            }
+        }
+        
+        async function loadSavedPositionsList() {
+            try {
+                const response = await fetch('/api/positions');
+                const data = await response.json();
+                
+                const listDiv = document.getElementById('positions-list-content');
+                
+                if (data.count === 0) {
+                    listDiv.innerHTML = '<p style="color: #666;">No saved positions yet</p>';
+                    return;
+                }
+                
+                let html = '<div style="max-height: 200px; overflow-y: auto;">';
+                for (const [name, pos] of Object.entries(data.positions)) {
+                    const angles = pos.angles.map(a => a.toFixed(1)).join(', ');
+                    html += `
+                        <div style="padding: 8px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 8px; background: #f9f9f9;">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div>
+                                    <strong>${name}</strong>
+                                    ${pos.description ? `<br><small style="color: #666;">${pos.description}</small>` : ''}
+                                    <br><small style="font-family: monospace; color: #666;">[${angles}]</small>
+                                </div>
+                                <button class="btn btn-danger" style="padding: 5px 10px; font-size: 12px;" 
+                                        onclick="deletePosition('${name}')">Delete</button>
+                            </div>
+                        </div>
+                    `;
+                }
+                html += '</div>';
+                
+                listDiv.innerHTML = html;
+            } catch (error) {
+                console.error('Error loading positions:', error);
+            }
+        }
+        
+        async function deletePosition(name) {
+            if (!confirm(`Delete position '${name}'?`)) return;
+            
+            try {
+                const response = await fetch(`/api/positions/${encodeURIComponent(name)}`, {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert(`✅ Position '${name}' deleted`);
+                    loadSavedPositionsList();
+                } else {
+                    alert('❌ Failed to delete position');
+                }
+            } catch (error) {
+                alert('❌ Error: ' + error);
             }
         }
         
@@ -836,9 +1055,667 @@
             }
         }
         
+        // =====================================================================
+        // Blockly Functions
+        // =====================================================================
+        
+        function initBlockly() {
+            if (blocklyWorkspace) {
+                return; // Already initialized
+            }
+            
+            // Define custom LeRobot blocks using modern Blockly API
+            
+            // ============ Robot Arm Movement Blocks ============
+            
+            Blockly.Blocks['robot_move_joint'] = {
+                init: function() {
+                    this.appendDummyInput()
+                        .appendField("Move joint")
+                        .appendField(new Blockly.FieldDropdown([
+                            ["Joint 1 (Base)", "0"],
+                            ["Joint 2 (Shoulder)", "1"],
+                            ["Joint 3 (Elbow)", "2"],
+                            ["Joint 4 (Wrist Roll)", "3"],
+                            ["Joint 5 (Wrist Pitch)", "4"],
+                            ["Gripper", "5"]
+                        ]), "JOINT")
+                        .appendField("to")
+                        .appendField(new Blockly.FieldNumber(0, -180, 180, 1), "ANGLE")
+                        .appendField("degrees");
+                    this.setPreviousStatement(true, null);
+                    this.setNextStatement(true, null);
+                    this.setColour(290);
+                    this.setTooltip("Move a specific joint to target angle");
+                }
+            };
+            
+            Blockly.Python.forBlock['robot_move_joint'] = function(block, generator) {
+                const joint = block.getFieldValue('JOINT');
+                const angle = block.getFieldValue('ANGLE');
+                return `robot.move_joint(${joint}, ${angle})\ntime.sleep(0.5)\n`;
+            };
+            
+            Blockly.Blocks['robot_gripper'] = {
+                init: function() {
+                    this.appendDummyInput()
+                        .appendField("Gripper")
+                        .appendField(new Blockly.FieldDropdown([
+                            ["Open", "open"],
+                            ["Close", "close"],
+                            ["Half Open", "half"]
+                        ]), "ACTION");
+                    this.setPreviousStatement(true, null);
+                    this.setNextStatement(true, null);
+                    this.setColour(290);
+                    this.setTooltip("Control the gripper");
+                }
+            };
+            
+            Blockly.Python.forBlock['robot_gripper'] = function(block, generator) {
+                const action = block.getFieldValue('ACTION');
+                const angles = {
+                    'open': '180',
+                    'close': '0',
+                    'half': '90'
+                };
+                return `robot.move_joint(5, ${angles[action]})  # Gripper\ntime.sleep(0.5)\n`;
+            };
+            
+            Blockly.Blocks['robot_home'] = {
+                init: function() {
+                    this.appendDummyInput()
+                        .appendField("Move to home position");
+                    this.setPreviousStatement(true, null);
+                    this.setNextStatement(true, null);
+                    this.setColour(290);
+                    this.setTooltip("Move robot to home position (all joints to 0)");
+                }
+            };
+            
+            Blockly.Python.forBlock['robot_home'] = function(block, generator) {
+                return `# Move to home position\nfor joint in range(6):\n    robot.move_joint(joint, 0)\ntime.sleep(1.0)\n`;
+            };
+            
+            Blockly.Blocks['robot_get_position'] = {
+                init: function() {
+                    this.appendDummyInput()
+                        .appendField("Get joint")
+                        .appendField(new Blockly.FieldDropdown([
+                            ["Joint 1", "0"],
+                            ["Joint 2", "1"],
+                            ["Joint 3", "2"],
+                            ["Joint 4", "3"],
+                            ["Joint 5", "4"],
+                            ["Gripper", "5"]
+                        ]), "JOINT")
+                        .appendField("position");
+                    this.setOutput(true, "Number");
+                    this.setColour(290);
+                    this.setTooltip("Get current position of a joint");
+                }
+            };
+            
+            Blockly.Python.forBlock['robot_get_position'] = function(block, generator) {
+                const joint = block.getFieldValue('JOINT');
+                return [`robot.get_joint_position(${joint})`, generator.ORDER_FUNCTION_CALL];
+            };
+            
+            Blockly.Blocks['robot_save_position'] = {
+                init: function() {
+                    this.appendDummyInput()
+                        .appendField("Save current position as")
+                        .appendField(new Blockly.FieldTextInput("pos1"), "NAME");
+                    this.setPreviousStatement(true, null);
+                    this.setNextStatement(true, null);
+                    this.setColour(290);
+                    this.setTooltip("Save current robot position");
+                }
+            };
+            
+            Blockly.Python.forBlock['robot_save_position'] = function(block, generator) {
+                const name = block.getFieldValue('NAME');
+                return `${name} = [robot.get_joint_position(i) for i in range(6)]\nprint(f"Saved position: {${name}}")\n`;
+            };
+            
+            Blockly.Blocks['robot_load_position'] = {
+                init: function() {
+                    this.appendDummyInput()
+                        .appendField("Move to saved position")
+                        .appendField(new Blockly.FieldTextInput("pos1"), "NAME");
+                    this.setPreviousStatement(true, null);
+                    this.setNextStatement(true, null);
+                    this.setColour(290);
+                    this.setTooltip("Move to previously saved position");
+                }
+            };
+            
+            Blockly.Python.forBlock['robot_load_position'] = function(block, generator) {
+                const name = block.getFieldValue('NAME');
+                return `for i, angle in enumerate(${name}):\n    robot.move_joint(i, angle)\ntime.sleep(1.0)\n`;
+            };
+            
+            Blockly.Blocks['robot_move_to_saved'] = {
+                init: function() {
+                    this.appendDummyInput()
+                        .appendField("Move to saved position")
+                        .appendField(new Blockly.FieldTextInput("position1"), "POSNAME");
+                    this.setPreviousStatement(true, null);
+                    this.setNextStatement(true, null);
+                    this.setColour(260);
+                    this.setTooltip("Move to a position saved during teleoperation");
+                }
+            };
+            
+            Blockly.Python.forBlock['robot_move_to_saved'] = function(block, generator) {
+                const posname = block.getFieldValue('POSNAME');
+                return `# Move to saved position: ${posname}
+if '${posname}' in positions:
+    pos = positions['${posname}']
+    for i, angle in enumerate(pos['angles']):
+        robot.move_joint(i, angle)
+    time.sleep(1.0)
+    print(f"Moved to position: ${posname}")
+else:
+    print(f"Position '${posname}' not found!")
+`;
+            };
+            
+            Blockly.Blocks['robot_get_saved_position'] = {
+                init: function() {
+                    this.appendDummyInput()
+                        .appendField("Get saved position")
+                        .appendField(new Blockly.FieldTextInput("position1"), "POSNAME");
+                    this.setOutput(true, "Array");
+                    this.setColour(260);
+                    this.setTooltip("Get angles from saved position");
+                }
+            };
+            
+            Blockly.Python.forBlock['robot_get_saved_position'] = function(block, generator) {
+                const posname = block.getFieldValue('POSNAME');
+                return [`positions.get('${posname}', {}).get('angles', [0]*6)`, generator.ORDER_FUNCTION_CALL];
+            };
+            
+            Blockly.Blocks['robot_list_saved_positions'] = {
+                init: function() {
+                    this.appendDummyInput()
+                        .appendField("Print all saved positions");
+                    this.setPreviousStatement(true, null);
+                    this.setNextStatement(true, null);
+                    this.setColour(260);
+                    this.setTooltip("List all available saved positions");
+                }
+            };
+            
+            Blockly.Python.forBlock['robot_list_saved_positions'] = function(block, generator) {
+                return `print("Available positions:")
+for name, pos in positions.items():
+    print(f"  - {name}: {pos['angles']}")
+`;
+            };
+            
+            Blockly.Blocks['robot_smooth_move'] = {
+                init: function() {
+                    this.appendDummyInput()
+                        .appendField("Smooth move joint")
+                        .appendField(new Blockly.FieldDropdown([
+                            ["Joint 1", "0"],
+                            ["Joint 2", "1"],
+                            ["Joint 3", "2"],
+                            ["Joint 4", "3"],
+                            ["Joint 5", "4"],
+                            ["Gripper", "5"]
+                        ]), "JOINT")
+                        .appendField("to")
+                        .appendField(new Blockly.FieldNumber(0, -180, 180, 1), "ANGLE")
+                        .appendField("° in")
+                        .appendField(new Blockly.FieldNumber(1, 0.1, 10, 0.1), "DURATION")
+                        .appendField("sec");
+                    this.setPreviousStatement(true, null);
+                    this.setNextStatement(true, null);
+                    this.setColour(290);
+                    this.setTooltip("Smoothly interpolate joint movement");
+                }
+            };
+            
+            Blockly.Python.forBlock['robot_smooth_move'] = function(block, generator) {
+                const joint = block.getFieldValue('JOINT');
+                const angle = block.getFieldValue('ANGLE');
+                const duration = block.getFieldValue('DURATION');
+                return `# Smooth move\nstart = robot.get_joint_position(${joint})\nsteps = 20\nfor i in range(steps + 1):\n    pos = start + (${angle} - start) * i / steps\n    robot.move_joint(${joint}, pos)\n    time.sleep(${duration} / steps)\n`;
+            };
+            
+            // ============ Utility Blocks ============
+            
+            Blockly.Blocks['robot_wait'] = {
+                init: function() {
+                    this.appendDummyInput()
+                        .appendField("Wait")
+                        .appendField(new Blockly.FieldNumber(1, 0, 60, 0.1), "DURATION")
+                        .appendField("seconds");
+                    this.setPreviousStatement(true, null);
+                    this.setNextStatement(true, null);
+                    this.setColour(160);
+                    this.setTooltip("Wait for specified duration");
+                }
+            };
+            
+            Blockly.Python.forBlock['robot_wait'] = function(block, generator) {
+                const duration = block.getFieldValue('DURATION');
+                return `time.sleep(${duration})\n`;
+            };
+            
+            Blockly.Blocks['robot_print'] = {
+                init: function() {
+                    this.appendDummyInput()
+                        .appendField("Print")
+                        .appendField(new Blockly.FieldTextInput("Hello"), "TEXT");
+                    this.setPreviousStatement(true, null);
+                    this.setNextStatement(true, null);
+                    this.setColour(160);
+                    this.setTooltip("Print a message");
+                }
+            };
+            
+            Blockly.Python.forBlock['robot_print'] = function(block, generator) {
+                const text = block.getFieldValue('TEXT');
+                return `print("${text}")\n`;
+            };
+            
+            // Set global Python generator instance
+            pythonGenerator = Blockly.Python;
+            
+            // Initialize workspace
+            blocklyWorkspace = Blockly.inject('blocklyDiv', {
+                toolbox: `
+                    <xml>
+                        <category name="Robot Arm" colour="290">
+                            <block type="robot_move_joint">
+                                <field name="JOINT">0</field>
+                                <field name="ANGLE">45</field>
+                            </block>
+                            <block type="robot_gripper">
+                                <field name="ACTION">open</field>
+                            </block>
+                            <block type="robot_home"></block>
+                            <block type="robot_smooth_move">
+                                <field name="JOINT">0</field>
+                                <field name="ANGLE">90</field>
+                                <field name="DURATION">2</field>
+                            </block>
+                        </category>
+                        <category name="Positions" colour="260">
+                            <block type="robot_get_position">
+                                <field name="JOINT">0</field>
+                            </block>
+                            <block type="robot_save_position">
+                                <field name="NAME">pos1</field>
+                            </block>
+                            <block type="robot_load_position">
+                                <field name="NAME">pos1</field>
+                            </block>
+                        </category>
+                        <category name="Saved Positions" colour="200">
+                            <label text="Positions from Teleoperation"></label>
+                            <block type="robot_move_to_saved">
+                                <field name="POSNAME">position1</field>
+                            </block>
+                            <block type="robot_get_saved_position">
+                                <field name="POSNAME">position1</field>
+                            </block>
+                            <block type="robot_list_saved_positions"></block>
+                        </category>
+                        <category name="Logic" colour="210">
+                            <block type="controls_if"></block>
+                            <block type="logic_compare"></block>
+                            <block type="logic_operation"></block>
+                            <block type="logic_negate"></block>
+                            <block type="logic_boolean"></block>
+                        </category>
+                        <category name="Loops" colour="120">
+                            <block type="controls_repeat_ext">
+                                <value name="TIMES">
+                                    <shadow type="math_number">
+                                        <field name="NUM">10</field>
+                                    </shadow>
+                                </value>
+                            </block>
+                            <block type="controls_whileUntil"></block>
+                            <block type="controls_for"></block>
+                        </category>
+                        <category name="Math" colour="230">
+                            <block type="math_number"></block>
+                            <block type="math_arithmetic"></block>
+                            <block type="math_single"></block>
+                        </category>
+                        <category name="Text" colour="160">
+                            <block type="text"></block>
+                            <block type="text_print">
+                                <value name="TEXT">
+                                    <shadow type="text">
+                                        <field name="TEXT">Hello</field>
+                                    </shadow>
+                                </value>
+                            </block>
+                            <block type="robot_print">
+                                <field name="TEXT">Robot status</field>
+                            </block>
+                        </category>
+                        <category name="Variables" colour="330" custom="VARIABLE"></category>
+                        <category name="Utilities" colour="160">
+                            <block type="robot_wait">
+                                <field name="DURATION">1</field>
+                            </block>
+                        </category>
+                    </xml>
+                `,
+                grid: {
+                    spacing: 20,
+                    length: 3,
+                    colour: '#ccc',
+                    snap: true
+                },
+                zoom: {
+                    controls: true,
+                    wheel: true,
+                    startScale: 1.0,
+                    maxScale: 3,
+                    minScale: 0.3,
+                    scaleSpeed: 1.2
+                },
+                trashcan: true
+            });
+            
+            // Update code display when workspace changes
+            blocklyWorkspace.addChangeListener(function(event) {
+                try {
+                    let code = pythonGenerator.workspaceToCode(blocklyWorkspace);
+                    
+                    // Add imports if code exists (robot object provided by backend)
+                    if (code.trim()) {
+                        code = `# LeRobot Blockly Program
+# Robot object 'robot' is provided by the execution environment
+import time
+
+# User program starts here
+${code}`;
+                    }
+                    
+                    const codeDisplay = document.getElementById('generated-code');
+                    if (codeDisplay) {
+                        codeDisplay.textContent = code || '# Drag blocks here to generate Python code';
+                    }
+                } catch (error) {
+                    console.error('Error generating code:', error);
+                }
+            });
+            
+            // Initial code update
+            setTimeout(function() {
+                let code = pythonGenerator.workspaceToCode(blocklyWorkspace);
+                
+                // Add imports if code exists (robot object provided by backend)
+                if (code.trim()) {
+                    code = `# LeRobot Blockly Program
+# Robot object 'robot' is provided by the execution environment
+import time
+
+# User program starts here
+${code}`;
+                }
+                
+                const codeDisplay = document.getElementById('generated-code');
+                if (codeDisplay) {
+                    codeDisplay.textContent = code || '# Drag blocks here to generate Python code';
+                }
+            }, 100);
+        }
+        
+        async function saveBlocklyProgram() {
+            if (!blocklyWorkspace) {
+                alert('❌ Blockly workspace not initialized');
+                return;
+            }
+            
+            const name = prompt('Enter program name:');
+            if (!name) return;
+            
+            try {
+                // Use JSON serialization instead of XML
+                const state = Blockly.serialization.workspaces.save(blocklyWorkspace);
+                const workspaceJson = JSON.stringify(state);
+                let pythonCode = pythonGenerator.workspaceToCode(blocklyWorkspace);
+                
+                // Add header comment (robot provided by backend)
+                if (pythonCode.trim()) {
+                    pythonCode = `# LeRobot Blockly Program
+# Robot object 'robot' is provided by the execution environment
+import time
+
+${pythonCode}`;
+                }
+                
+                console.log('Saving program:', name);
+                console.log('JSON length:', workspaceJson.length);
+                console.log('Python code length:', pythonCode.length);
+                
+                const response = await fetch('/api/blockly/programs/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: name,
+                        workspace: workspaceJson,
+                        python_code: pythonCode
+                    })
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('✅ Program saved: ' + name);
+                    loadSavedPrograms();
+                } else {
+                    alert('❌ Failed to save program: ' + (data.message || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Save error:', error);
+                alert('❌ Error: ' + error);
+            }
+        }
+        
+        async function loadBlocklyProgram() {
+            if (!blocklyWorkspace) {
+                alert('❌ Blockly workspace not initialized');
+                return;
+            }
+            
+            // Show list of saved programs
+            try {
+                const response = await fetch('/api/blockly/programs');
+                const data = await response.json();
+                
+                if (data.count === 0) {
+                    alert('No saved programs found');
+                    return;
+                }
+                
+                const names = Object.keys(data.programs);
+                const name = prompt('Enter program name to load:\n\nAvailable: ' + names.join(', '));
+                if (!name) return;
+                
+                const loadResponse = await fetch(`/api/blockly/programs/${encodeURIComponent(name)}`);
+                const program = await loadResponse.json();
+                
+                console.log('Loading program:', name);
+                console.log('Program data:', program);
+                
+                if (program.workspace) {
+                    // Use JSON deserialization instead of XML
+                    const state = JSON.parse(program.workspace);
+                    Blockly.serialization.workspaces.load(state, blocklyWorkspace);
+                    alert('✅ Program loaded: ' + name);
+                } else {
+                    alert('❌ Failed to load program: No workspace data');
+                }
+            } catch (error) {
+                console.error('Load error:', error);
+                alert('❌ Error: ' + error);
+            }
+        }
+        
+        function clearBlockly() {
+            if (confirm('Clear workspace?')) {
+                blocklyWorkspace.clear();
+            }
+        }
+        
+        async function runBlocklyProgram() {
+            let code = pythonGenerator.workspaceToCode(blocklyWorkspace);
+            
+            // Add header comment (robot provided by backend)
+            if (code.trim()) {
+                code = `# LeRobot Blockly Program
+# Robot object 'robot' is provided by the execution environment
+import time
+
+${code}`;
+            }
+            
+            if (!code.trim()) {
+                alert('❌ No code to execute');
+                return;
+            }
+            
+            if (!confirm('Run this program?')) return;
+            
+            try {
+                const response = await fetch('/api/blockly/execute', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        code: code,
+                        timeout: 30
+                    })
+                });
+                const result = await response.json();
+                
+                const resultsDiv = document.getElementById('execution-results');
+                const outputDiv = document.getElementById('execution-output');
+                
+                if (result.success) {
+                    outputDiv.innerHTML = `
+                        <div class="alert alert-success">
+                            <strong>✅ Success!</strong><br>
+                            ${result.output || 'Program executed successfully'}
+                        </div>
+                    `;
+                } else {
+                    outputDiv.innerHTML = `
+                        <div class="alert alert-danger">
+                            <strong>❌ Error:</strong> ${result.error_type || 'Error'}<br>
+                            ${result.error}
+                        </div>
+                    `;
+                }
+                
+                resultsDiv.style.display = 'block';
+            } catch (error) {
+                alert('❌ Execution error: ' + error);
+            }
+        }
+        
+        async function loadSavedPrograms() {
+            try {
+                const response = await fetch('/api/blockly/programs');
+                const data = await response.json();
+                
+                const listDiv = document.getElementById('saved-programs-list');
+                
+                if (data.count === 0) {
+                    listDiv.innerHTML = '<p>No saved programs yet</p>';
+                    return;
+                }
+                
+                let html = '<div class="wifi-list">';
+                for (const [name, program] of Object.entries(data.programs)) {
+                    html += `
+                        <div class="wifi-item" style="cursor: default;">
+                            <div>
+                                <strong>${name}</strong><br>
+                                <small>${program.python_code.split('\\n').length} lines</small>
+                            </div>
+                            <div>
+                                <button class="btn btn-success" style="padding: 8px 15px; margin: 0 5px;" 
+                                        onclick="loadProgramByName('${name}')">Load</button>
+                                <button class="btn btn-danger" style="padding: 8px 15px; margin: 0;" 
+                                        onclick="deleteProgramByName('${name}')">Delete</button>
+                            </div>
+                        </div>
+                    `;
+                }
+                html += '</div>';
+                
+                listDiv.innerHTML = html;
+            } catch (error) {
+                console.error('Error loading saved programs:', error);
+            }
+        }
+        
+        async function loadProgramByName(name) {
+            if (!blocklyWorkspace) {
+                alert('❌ Blockly workspace not initialized');
+                return;
+            }
+            
+            try {
+                console.log('Loading program:', name);
+                const response = await fetch(`/api/blockly/programs/${encodeURIComponent(name)}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const program = await response.json();
+                console.log('Program loaded:', program);
+                
+                if (program.workspace) {
+                    // Use JSON deserialization instead of XML
+                    const state = JSON.parse(program.workspace);
+                    Blockly.serialization.workspaces.load(state, blocklyWorkspace);
+                    alert('✅ Program loaded: ' + name);
+                } else {
+                    alert('❌ No workspace data in program');
+                }
+            } catch (error) {
+                console.error('Load error:', error);
+                alert('❌ Error loading program: ' + error.message);
+            }
+        }
+        
+        async function deleteProgramByName(name) {
+            if (!confirm(`Delete program '${name}'?`)) return;
+            
+            try {
+                const response = await fetch(`/api/blockly/programs/${encodeURIComponent(name)}`, {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('✅ Program deleted');
+                    loadSavedPrograms();
+                } else {
+                    alert('❌ Failed to delete program');
+                }
+            } catch (error) {
+                alert('❌ Error: ' + error);
+            }
+        }
+        
         // Initialize
         setInterval(updateTeleopStatus, 5000);
         updateTeleopStatus();
+        loadSavedPositionsList();
         connectWebSocket();
     </script>
 </body>

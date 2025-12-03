@@ -40,6 +40,14 @@ except ImportError as e:
     logger.warning(f"Network manager not available: {e}")
     NETWORK_AVAILABLE = False
 
+try:
+    from blockly_manager import BlocklyManager
+    BLOCKLY_AVAILABLE = True
+except ImportError as e:
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Blockly manager not available: {e}")
+    BLOCKLY_AVAILABLE = False
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -77,6 +85,10 @@ class RobotState:
         # Network management
         self.network_manager: Optional[NetworkManager] = None
         self.network_enabled: bool = False
+        
+        # Blockly management
+        self.blockly_manager: Optional[BlocklyManager] = None
+        self.blockly_enabled: bool = False
         
         # WebSocket clients
         self.websocket_clients: List[WebSocket] = []
@@ -179,6 +191,17 @@ class CameraConfig(BaseModel):
     name: str
     resolution: List[int] = [640, 480]
     fps: int = 30
+
+
+class BlocklyProgram(BaseModel):
+    name: str
+    workspace: str  # JSON representation of workspace
+    python_code: str
+
+
+class BlocklyExecute(BaseModel):
+    code: str
+    timeout: int = 30
 
 
 # ============================================================================
@@ -344,6 +367,24 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.error(f"Error initializing network: {e}")
         
+        # Initial state refresh to get device ports
+        state.refresh_state()
+        
+        # Initialize Blockly manager AFTER state refresh to get correct robot port
+        if BLOCKLY_AVAILABLE:
+            logger.info("🧩 Initializing Blockly manager...")
+            try:
+                # Pass follower robot port to Blockly for direct robot control
+                robot_port = state.follower_port if state.follower_port else None
+                logger.info(f"Using robot port for Blockly: {robot_port}")
+                state.blockly_manager = BlocklyManager(
+                    robot_port=robot_port
+                )
+                state.blockly_enabled = True
+                logger.info(f"✅ Blockly manager initialized (robot_port: {robot_port})")
+            except Exception as e:
+                logger.error(f"Error initializing Blockly: {e}")
+        
         # Initial state refresh
         state.refresh_state()
         
@@ -385,6 +426,11 @@ async def lifespan(app: FastAPI):
         if state.camera_manager:
             logger.info("Shutting down cameras...")
             await state.camera_manager.shutdown()
+        
+        # Shutdown Blockly manager (disconnect robot)
+        if state.blockly_manager:
+            logger.info("Shutting down Blockly manager...")
+            state.blockly_manager.shutdown()
         
         # Close WebSocket connections
         for ws in state.websocket_clients:
@@ -617,6 +663,95 @@ async def disconnect_network():
         "success": success,
         "message": "Disconnected" if success else "Failed to disconnect"
     }
+
+
+# ============================================================================
+# Blockly API Endpoints
+# ============================================================================
+
+@app.get("/api/blockly/blocks")
+async def get_custom_blocks():
+    """Get custom Blockly blocks definition"""
+    if not state.blockly_enabled or not state.blockly_manager:
+        raise HTTPException(status_code=503, detail="Blockly not available")
+    
+    return {
+        "blocks": state.blockly_manager.generate_custom_blocks()
+    }
+
+
+@app.get("/api/blockly/programs")
+async def list_programs():
+    """List all saved Blockly programs"""
+    if not state.blockly_enabled or not state.blockly_manager:
+        raise HTTPException(status_code=503, detail="Blockly not available")
+    
+    programs = state.blockly_manager.list_programs()
+    return {
+        "programs": programs,
+        "count": len(programs)
+    }
+
+
+@app.post("/api/blockly/programs/save")
+async def save_program(program: BlocklyProgram):
+    """Save a Blockly program"""
+    if not state.blockly_enabled or not state.blockly_manager:
+        raise HTTPException(status_code=503, detail="Blockly not available")
+    
+    success = state.blockly_manager.save_program(
+        program.name,
+        program.workspace,
+        program.python_code
+    )
+    
+    return {
+        "success": success,
+        "message": f"Program '{program.name}' saved" if success else "Failed to save program"
+    }
+
+
+@app.get("/api/blockly/programs/{name}")
+async def load_program(name: str):
+    """Load a saved Blockly program"""
+    if not state.blockly_enabled or not state.blockly_manager:
+        raise HTTPException(status_code=503, detail="Blockly not available")
+    
+    program = state.blockly_manager.load_program(name)
+    if not program:
+        raise HTTPException(status_code=404, detail=f"Program '{name}' not found")
+    
+    return program
+
+
+@app.delete("/api/blockly/programs/{name}")
+async def delete_program(name: str):
+    """Delete a saved Blockly program"""
+    if not state.blockly_enabled or not state.blockly_manager:
+        raise HTTPException(status_code=503, detail="Blockly not available")
+    
+    success = state.blockly_manager.delete_program(name)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Program '{name}' not found")
+    
+    return {
+        "success": True,
+        "message": f"Program '{name}' deleted"
+    }
+
+
+@app.post("/api/blockly/execute")
+async def execute_code(execution: BlocklyExecute):
+    """Execute Blockly-generated Python code"""
+    if not state.blockly_enabled or not state.blockly_manager:
+        raise HTTPException(status_code=503, detail="Blockly not available")
+    
+    result = await state.blockly_manager.execute_python_code(
+        execution.code,
+        execution.timeout
+    )
+    
+    return result
 
 
 # ============================================================================
