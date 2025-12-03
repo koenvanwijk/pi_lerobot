@@ -289,15 +289,30 @@ async def stop_teleoperation() -> bool:
     logger.info("🛑 Stop teleoperation...")
     
     try:
-        state.teleop_process.terminate()
+        # Send SIGINT (Ctrl-C) for graceful shutdown - better for serial port cleanup
+        logger.info("Sending SIGINT (Ctrl-C) for graceful shutdown...")
+        state.teleop_process.send_signal(signal.SIGINT)
         
-        for _ in range(50):
+        # Wait up to 5 seconds for graceful shutdown
+        for i in range(50):
             if state.teleop_process.poll() is not None:
+                logger.info(f"Process stopped gracefully after {i*0.1:.1f}s")
                 break
             await asyncio.sleep(0.1)
         
+        # If still running, try SIGTERM
         if state.teleop_process.poll() is None:
-            logger.warning("Process reageert niet, force kill...")
+            logger.warning("SIGINT timeout, trying SIGTERM...")
+            state.teleop_process.terminate()
+            
+            for _ in range(30):
+                if state.teleop_process.poll() is not None:
+                    break
+                await asyncio.sleep(0.1)
+        
+        # Last resort: SIGKILL
+        if state.teleop_process.poll() is None:
+            logger.warning("SIGTERM timeout, force killing with SIGKILL...")
             state.teleop_process.kill()
             state.teleop_process.wait()
         
@@ -374,14 +389,18 @@ async def lifespan(app: FastAPI):
         if BLOCKLY_AVAILABLE:
             logger.info("🧩 Initializing Blockly manager...")
             try:
-                # Pass follower robot port to Blockly for direct robot control
+                # Pass follower robot port, type and ID to Blockly for direct robot control
                 robot_port = state.follower_port if state.follower_port else None
-                logger.info(f"Using robot port for Blockly: {robot_port}")
+                robot_type = state.follower_type if state.follower_type else None
+                robot_id = state.follower_id if state.follower_id else None
+                logger.info(f"Using robot for Blockly: port={robot_port}, type={robot_type}, id={robot_id}")
                 state.blockly_manager = BlocklyManager(
-                    robot_port=robot_port
+                    robot_port=robot_port,
+                    robot_type=robot_type,
+                    robot_id=robot_id
                 )
                 state.blockly_enabled = True
-                logger.info(f"✅ Blockly manager initialized (robot_port: {robot_port})")
+                logger.info(f"✅ Blockly manager initialized (port: {robot_port}, type: {robot_type}, id: {robot_id})")
             except Exception as e:
                 logger.error(f"Error initializing Blockly: {e}")
         
@@ -746,12 +765,61 @@ async def execute_code(execution: BlocklyExecute):
     if not state.blockly_enabled or not state.blockly_manager:
         raise HTTPException(status_code=503, detail="Blockly not available")
     
-    result = await state.blockly_manager.execute_python_code(
-        execution.code,
-        execution.timeout
-    )
+    # Stop teleoperation if running (need exclusive access to robot)
+    was_teleop_running = state.is_running()
+    if was_teleop_running:
+        logger.info("Stopping teleoperation for Blockly execution...")
+        await stop_teleoperation()
+        
+        # SIGINT should handle cleanup better, but still wait a bit for hardware
+        logger.info("Waiting for serial port to be released...")
+        await asyncio.sleep(5.0)  # Reduced from 8s - SIGINT should cleanup faster
+        logger.info("Port should now be available")
     
-    return result
+    try:
+        # Initialize robot connection with retry logic
+        logger.info("Initializing robot for Blockly...")
+        max_retries = 3
+        retry_delay = 2.0
+        
+        for attempt in range(max_retries):
+            state.blockly_manager.robot_api._initialize_robot()
+            
+            if state.blockly_manager.robot_api.robot:
+                logger.info(f"✅ Robot connected successfully on attempt {attempt + 1}")
+                break
+            
+            if attempt < max_retries - 1:
+                logger.warning(f"⚠️ Connection attempt {attempt + 1} failed, waiting {retry_delay}s before retry...")
+                await asyncio.sleep(retry_delay)
+                retry_delay += 1.0  # Increase delay: 2s, 3s, 4s
+        
+        if not state.blockly_manager.robot_api.robot:
+            raise HTTPException(
+                status_code=503,
+                detail="Could not connect to robot after 3 attempts. Hardware may need more time to reset."
+            )
+        
+        # Execute code
+        result = await state.blockly_manager.execute_python_code(
+            execution.code,
+            execution.timeout
+        )
+        
+        return result
+        
+    finally:
+        # Disconnect robot
+        logger.info("Disconnecting robot after Blockly execution...")
+        state.blockly_manager.robot_api.disconnect()
+        
+        # Wait longer for hardware to fully reset after disconnect
+        await asyncio.sleep(3.0)  # Increased to 3 seconds
+        
+        # Restart teleoperation if it was running
+        if was_teleop_running:
+            logger.info("Restarting teleoperation...")
+            await start_teleoperation()
 
 
 # ============================================================================

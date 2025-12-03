@@ -21,41 +21,54 @@ class RobotAPI:
     Communicates with the actual robot hardware
     """
     
-    def __init__(self, robot_port: Optional[str] = None):
+    def __init__(self, robot_port: Optional[str] = None, robot_type: Optional[str] = None, robot_id: Optional[str] = None):
         """
         Initialize robot API
         
         Args:
             robot_port: Serial port of the follower robot (e.g., /dev/tty_follower)
+            robot_type: Robot type (e.g., 'so101', 'so100', 'koch')
+            robot_id: Robot identifier (e.g., 'white', 'black', 'default')
         """
         self.robot = None
         self.robot_port = robot_port
+        self.robot_type = robot_type or "so101"  # Default to so101
+        self.robot_id = robot_id or "default"  # Default to 'default'
         self.positions = [0.0] * 6  # Cache for 5 DOF + gripper
-        self._initialize_robot()
+        # Don't initialize robot here - do it lazily when needed
+
     
     def _initialize_robot(self):
         """Initialize the real LeRobot connection"""
         try:
             if self.robot_port:
-                # Import LeRobot dynamically to avoid issues if not available
-                from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
+                # Dynamic import based on robot type (from port name like /dev/tty_white_follower_so101)
+                # Extract robot type from port if not provided
+                if not self.robot_type and "_follower_" in self.robot_port:
+                    # e.g., /dev/tty_white_follower_so101 -> so101
+                    self.robot_type = self.robot_port.split("_follower_")[-1].split("_")[0]
                 
-                logger.info(f"Initializing robot on port: {self.robot_port}")
+                robot_type = self.robot_type.lower()
                 
-                # Create motor bus for follower robot
-                self.robot = DynamixelMotorsBus(
-                    port=self.robot_port,
-                    motors={
-                        "shoulder_pan": (1, "xl330-m077"),
-                        "shoulder_lift": (2, "xl330-m077"),
-                        "elbow_flex": (3, "xl330-m077"),
-                        "wrist_flex": (4, "xl330-m077"),
-                        "wrist_roll": (5, "xl330-m077"),
-                        "gripper": (6, "xl330-m077"),
-                    }
-                )
+                logger.info(f"Initializing {robot_type} robot arm on port: {self.robot_port}, id: {self.robot_id}")
+                
+                # Import robot module dynamically
+                robot_module_name = f"{robot_type}_follower"
+                robot_module = __import__(f"lerobot.robots.{robot_module_name}", fromlist=[
+                    f"{robot_type.upper()}Follower",
+                    f"{robot_type.upper()}FollowerConfig"
+                ])
+                
+                # Get robot class and config class
+                robot_class = getattr(robot_module, f"{robot_type.upper()}Follower")
+                config_class = getattr(robot_module, f"{robot_type.upper()}FollowerConfig")
+                
+                # Create config with port and id
+                config = config_class(port=self.robot_port, id=self.robot_id)
+                self.robot = robot_class(config=config)
                 self.robot.connect()
-                logger.info("✅ Robot connected successfully")
+                
+                logger.info(f"✅ {robot_type.upper()} robot arm connected successfully")
                 
                 # Read initial positions
                 self._update_positions()
@@ -63,7 +76,7 @@ class RobotAPI:
                 logger.warning("No robot port provided, using simulation mode")
                 
         except Exception as e:
-            logger.error(f"Failed to initialize robot: {e}")
+            logger.error(f"Failed to initialize robot: {e}", exc_info=True)
             logger.warning("Falling back to simulation mode")
             self.robot = None
     
@@ -71,11 +84,11 @@ class RobotAPI:
         """Read current positions from robot"""
         if self.robot:
             try:
-                positions = self.robot.read("Present_Position")
-                for i, (name, pos) in enumerate(positions.items()):
-                    if i < 6:
-                        # Convert to degrees
-                        self.positions[i] = float(pos)
+                # Get current observation from robot arm
+                obs = self.robot.get_observation()
+                # Extract positions from observation dict (motor_name.pos format)
+                motor_names = list(self.robot.bus.motors.keys())
+                self.positions = [obs[f"{name}.pos"] for name in motor_names]
             except Exception as e:
                 logger.error(f"Error reading positions: {e}")
     
@@ -93,23 +106,27 @@ class RobotAPI:
         
         try:
             if self.robot:
-                # Map joint index to motor name
-                motor_names = [
-                    "shoulder_pan",
-                    "shoulder_lift", 
-                    "elbow_flex",
-                    "wrist_flex",
-                    "wrist_roll",
-                    "gripper"
-                ]
+                # Get motor names from robot bus
+                motor_names = list(self.robot.bus.motors.keys())
                 
-                motor_name = motor_names[joint]
+                if joint >= len(motor_names):
+                    logger.error(f"Joint {joint} out of range (robot has {len(motor_names)} motors)")
+                    return
                 
-                # Send command to robot
-                self.robot.write("Goal_Position", {motor_name: angle})
+                # Create action dict with target position for specific motor
+                # Format: {"motor_name.pos": value, ...}
+                action = {}
+                for i, name in enumerate(motor_names):
+                    if i == joint:
+                        action[f"{name}.pos"] = angle
+                    else:
+                        action[f"{name}.pos"] = self.positions[i]
+                
+                # Send action to robot
+                self.robot.send_action(action)
                 self.positions[joint] = angle
                 
-                logger.info(f"Moved {motor_name} (joint {joint}) to {angle}°")
+                logger.info(f"Moved joint {joint} ({motor_names[joint]}) to {angle}°")
             else:
                 # Simulation mode
                 self.positions[joint] = angle
@@ -146,29 +163,10 @@ class RobotAPI:
         """
         if self.robot:
             try:
-                # Read from robot
-                positions_dict = self.robot.read("Present_Position")
-                
-                # Map motor names to joint indices
-                motor_order = [
-                    "shoulder_pan",      # Joint 0
-                    "shoulder_lift",     # Joint 1
-                    "elbow_flex",        # Joint 2
-                    "wrist_flex",        # Joint 3
-                    "wrist_roll",        # Joint 4
-                    "gripper"            # Joint 5
-                ]
-                
-                angles = []
-                for motor_name in motor_order:
-                    if motor_name in positions_dict:
-                        # Get position (already in degrees from LeRobot)
-                        angle = float(positions_dict[motor_name])
-                        angles.append(angle)
-                        logger.debug(f"{motor_name}: {angle}°")
-                    else:
-                        logger.warning(f"Motor {motor_name} not found in read data")
-                        angles.append(0.0)
+                # Read observation from robot arm
+                obs = self.robot.get_observation()
+                motor_names = list(self.robot.bus.motors.keys())
+                angles = [obs[f"{name}.pos"] for name in motor_names]
                 
                 # Update cache
                 self.positions = angles
@@ -197,12 +195,12 @@ class RobotAPI:
 class BlocklyManager:
     """Manages Blockly programs and execution"""
 
-    def __init__(self, robot_port: Optional[str] = None):
+    def __init__(self, robot_port: Optional[str] = None, robot_type: Optional[str] = None, robot_id: Optional[str] = None):
         self.saved_programs: Dict[str, Dict[str, Any]] = {}
         self.programs_file = Path.home() / ".lerobot_blockly_programs.json"
-        self.robot_api = RobotAPI(robot_port)
+        self.robot_api = RobotAPI(robot_port, robot_type, robot_id)
         self.load_programs()
-        logger.info(f"BlocklyManager initialized (robot_port: {robot_port})")
+        logger.info(f"BlocklyManager initialized (port: {robot_port}, type: {robot_type}, id: {robot_id})")
 
     def load_programs(self):
         """Load saved programs from disk"""
@@ -314,6 +312,7 @@ class BlocklyManager:
                 local_vars = {}
                 global_vars = {
                     '__builtins__': {
+                        '__import__': __import__,  # Allow imports
                         'print': print,
                         'range': range,
                         'len': len,
