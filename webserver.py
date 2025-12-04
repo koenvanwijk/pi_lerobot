@@ -484,6 +484,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount static files directory
+static_dir = Path(__file__).parent / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
 
 # ============================================================================
 # API Endpoints
@@ -498,6 +503,17 @@ async def root():
             return HTMLResponse(content=f.read())
     else:
         return HTMLResponse(content="<h1>Template not found</h1><p>Please ensure templates/index.html exists</p>")
+
+
+@app.get("/viewer")
+async def robot_viewer():
+    """Robot 3D viewer page (URDF-based, bambot quality)"""
+    template_path = Path(__file__).parent / "templates" / "robot_viewer.html"
+    if template_path.exists():
+        with open(template_path, 'r') as f:
+            return HTMLResponse(content=f.read())
+    else:
+        return HTMLResponse(content="<h1>Viewer not found</h1><p>Please ensure templates/robot_viewer.html exists</p>")
 
 
 @app.get("/api")
@@ -820,6 +836,35 @@ async def execute_code(execution: BlocklyExecute):
         if was_teleop_running:
             logger.info("Restarting teleoperation...")
             await start_teleoperation()
+
+
+@app.get("/api/robot/positions")
+async def get_robot_positions():
+    """Get current robot joint positions"""
+    if not state.blockly_enabled or not state.blockly_manager:
+        raise HTTPException(status_code=503, detail="Robot not available")
+    
+    try:
+        positions = state.blockly_manager.robot_api.read_all_positions()
+        return {
+            "success": True,
+            "positions": positions,
+            "joint_names": [
+                "shoulder_pan",
+                "shoulder_lift", 
+                "elbow_flex",
+                "wrist_flex",
+                "wrist_rotate",
+                "gripper"
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Error reading robot positions: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "positions": [0.0] * 6
+        }
 
 
 # ============================================================================
